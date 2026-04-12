@@ -1,0 +1,218 @@
+"""Inkbox phone media stream WebSocket server.
+
+This server handles live call WebSocket sessions. It is intentionally simple:
+- Declares Inkbox-managed STT + TTS via handshake response headers.
+- Receives transcript events from Inkbox.
+- Sends textStream responses for final transcript chunks.
+- Optionally wakes OpenClaw with call context for observability/escalation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+import urllib.request
+from dataclasses import dataclass
+from http import HTTPStatus
+
+from websockets.asyncio.server import ServerConnection, serve
+from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosed
+from websockets.http11 import Request, Response
+
+from .config import get_config
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_json(s: str) -> dict:
+    try:
+        data = json.loads(s)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _wake_openclaw(cfg: dict, text: str) -> None:
+    token = cfg.get("openclaw_hooks_token", "")
+    if not token:
+        return
+    port = cfg.get("openclaw_gateway_port", 18789)
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/hooks/wake",
+        data=json.dumps({"text": text, "mode": "now"}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            logger.info("OpenClaw wake for call event -> %s", resp.status)
+    except Exception as exc:
+        logger.warning("OpenClaw wake for call event failed: %s", exc)
+
+
+@dataclass
+class CallSession:
+    call_id: str = ""
+    local_phone_number: str = ""
+    remote_phone_number: str = ""
+    direction: str = ""
+    call_control_id: str = ""
+
+
+def _extract_event_name(payload: dict) -> str:
+    for key in ("event", "type", "event_type"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _extract_transcript_text(payload: dict) -> tuple[str, bool]:
+    candidates = [payload]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        candidates.append(data)
+    transcript = payload.get("transcript")
+    if isinstance(transcript, dict):
+        candidates.append(transcript)
+
+    text = ""
+    is_final = False
+    for c in candidates:
+        for key in ("text", "transcript", "utterance"):
+            value = c.get(key)
+            if isinstance(value, str) and value.strip() and not text:
+                text = value.strip()
+        for key in ("is_final", "final", "done"):
+            value = c.get(key)
+            if isinstance(value, bool):
+                is_final = value or is_final
+    return text, is_final
+
+
+def _build_reply_text(user_text: str) -> str:
+    if not user_text:
+        return "I’m here — can you repeat that?"
+    normalized = user_text.lower()
+
+    if any(greet in normalized for greet in ("hello", "hi", "hey")):
+        return "Hey — I hear you. What do you need?"
+    if "bye" in normalized or "goodbye" in normalized:
+        return "Got it. Talk soon — goodbye."
+
+    compact = re.sub(r"\s+", " ", user_text).strip()
+    if len(compact) > 220:
+        compact = compact[:217] + "..."
+    return f"Got it. You said: {compact}"
+
+
+def _parse_call_context(headers: Headers) -> CallSession:
+    raw = headers.get("X-Call-Context", "")
+    ctx = _safe_json(raw)
+    return CallSession(
+        call_id=str(ctx.get("call_id") or ""),
+        local_phone_number=str(ctx.get("phone_number") or ""),
+        remote_phone_number=str(ctx.get("remote_phone_number") or ""),
+        direction=str(ctx.get("direction") or ""),
+    )
+
+
+async def _handle_ws(ws: ServerConnection, cfg: dict) -> None:
+    call = _parse_call_context(ws.request.headers)
+    if call.call_id:
+        _wake_openclaw(
+            cfg,
+            f"Inkbox call started. Call ID: {call.call_id}. Local: {call.local_phone_number}. Remote: {call.remote_phone_number}. Direction: {call.direction}.",
+        )
+    logger.info("Call WS connected call_id=%s remote=%s", call.call_id, call.remote_phone_number)
+
+    try:
+        async for raw in ws:
+            payload = _safe_json(raw)
+            event = _extract_event_name(payload)
+
+            if event == "start":
+                for c in (payload, payload.get("data") if isinstance(payload.get("data"), dict) else {}):
+                    ccid = c.get("call_control_id")
+                    if isinstance(ccid, str) and ccid:
+                        call.call_control_id = ccid
+                        break
+                continue
+
+            if event == "stop":
+                logger.info("Call WS stop call_id=%s", call.call_id)
+                break
+
+            if event == "barge_in":
+                continue
+
+            if event == "transcript":
+                text, is_final = _extract_transcript_text(payload)
+                if not is_final:
+                    continue
+                reply = _build_reply_text(text)
+                outbound = {
+                    "event": "textStream",
+                    "text": reply,
+                    "done": True,
+                }
+                await ws.send(json.dumps(outbound))
+                continue
+
+    except ConnectionClosed:
+        logger.info("Call WS closed call_id=%s", call.call_id)
+
+
+def _process_request(conn: ServerConnection, request: Request):
+    cfg = get_config()
+    prefix = cfg.get("path_prefix", "")
+    expected = f"{prefix}/phone/media/ws" if prefix else "/phone/media/ws"
+    if request.path != expected:
+        return conn.respond(HTTPStatus.NOT_FOUND, "Not Found")
+    return None
+
+
+def _process_response(conn: ServerConnection, request: Request, response: Response):
+    response.headers["X-Use-Inkbox-Text-To-Speech"] = "true"
+    response.headers["X-Use-Inkbox-Speech-To-Text"] = "true"
+    return response
+
+
+async def _run() -> None:
+    cfg = get_config()
+    host = cfg.get("phone_media_host", "0.0.0.0")
+    port = int(cfg.get("phone_media_port", 8090))
+    prefix = cfg.get("path_prefix", "")
+    path = f"{prefix}/phone/media/ws" if prefix else "/phone/media/ws"
+
+    logger.info("Inkbox media WS listening on %s:%s%s", host, port, path)
+
+    async def handler(ws: ServerConnection):
+        await _handle_ws(ws, cfg)
+
+    async with serve(
+        handler,
+        host,
+        port,
+        process_request=_process_request,
+        process_response=_process_response,
+        ping_interval=20,
+        ping_timeout=20,
+        max_size=2**20,
+    ):
+        await asyncio.Future()
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    asyncio.run(_run())
+
+
+if __name__ == "__main__":
+    main()

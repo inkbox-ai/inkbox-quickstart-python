@@ -1,0 +1,19 @@
+# pyproject.toml
+
+[project]
+name = "inkbox-webhook"
+version = "0.1.0"
+description = "Inkbox email webhook receiver"
+requires-python = ">=3.12"
+dependencies = [
+  "websockets>=12,<16",
+]
+
+[project.scripts]
+inkbox-webhook = "inkbox_webhook.server:main"
+inkbox-webhook-process = "inkbox_webhook.processor:main"
+inkbox-phone-media = "inkbox_webhook.media_stream:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,5 +1,7 @@
-"""Email-specific webhook helpers.
+"""
 src/inkbox_webhook/handlers/email.py
+
+Email-specific webhook helpers.
 """
 
 from __future__ import annotations

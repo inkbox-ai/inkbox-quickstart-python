@@ -1,5 +1,7 @@
-"""Configuration loader -- reads .env from project root.
+"""
 src/inkbox_webhook/config.py
+
+Configuration loader -- reads .env from project root.
 """
 
 import os

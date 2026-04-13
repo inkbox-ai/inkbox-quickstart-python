@@ -6,6 +6,7 @@ version = "0.1.0"
 description = "Inkbox email webhook receiver"
 requires-python = ">=3.12"
 dependencies = [
+  "inkbox==0.2.10",
   "websockets>=12,<16",
 ]
 

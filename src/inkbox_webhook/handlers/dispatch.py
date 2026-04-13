@@ -1,5 +1,7 @@
-"""Webhook payload dispatch across handler domains.
+"""
 src/inkbox_webhook/handlers/dispatch.py
+
+Webhook payload dispatch across handler domains.
 """
 
 from __future__ import annotations

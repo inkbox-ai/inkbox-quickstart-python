@@ -1,21 +1,14 @@
-"""Inkbox webhook receiver.
+"""
 src/inkbox_webhook/server.py
 
-Listens for incoming webhooks, validates signatures per the Inkbox spec,
-and writes parsed payloads to the spool directory for pickup.
+Inkbox webhook receiver.
 
-Signature scheme (https://inkbox.ai/docs/api/mail/webhooks):
-  Headers: X-Inkbox-Request-ID, X-Inkbox-Timestamp, X-Inkbox-Signature
-  Signed content: {request_id}.{timestamp}.{raw_body}
-  Signature header value: sha256=<hex_digest>
-  Algorithm: HMAC-SHA256 with your organization's signing key
-  Timestamp tolerance: 300 seconds
+Listens for incoming webhooks, verifies signatures via ``inkbox.verify_webhook``,
+and writes parsed payloads to the spool directory for pickup.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import time
@@ -24,14 +17,14 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, cast
 
+from inkbox import verify_webhook
+
 from .config import Config, get_config
 from .handlers.dispatch import build_webhook_http_response, summarize_webhook_payload
 
 logger = logging.getLogger(__name__)
 
 CONFIG: Config = cast(Config, {})
-
-MAX_TIMESTAMP_DRIFT = 300  # seconds
 
 
 def trigger_openclaw_wake(summary: str) -> None:
@@ -54,37 +47,6 @@ def trigger_openclaw_wake(summary: str) -> None:
             logger.info(f"[{time.strftime('%H:%M:%S')}] OpenClaw wake -> {resp.status}")
     except Exception as exc:
         logger.info(f"[{time.strftime('%H:%M:%S')}] OpenClaw wake failed: {exc}")
-
-
-def verify_signature(
-    body: bytes,
-    request_id: str,
-    timestamp: str,
-    signature: str,
-    key: str,
-) -> bool:
-    """Verify Inkbox webhook signature.
-
-    Returns True if valid, False otherwise.
-    """
-    try:
-        ts = int(timestamp)
-    except (ValueError, TypeError):
-        return False
-    if abs(time.time() - ts) > MAX_TIMESTAMP_DRIFT:
-        return False
-
-    if not signature.startswith("sha256="):
-        return False
-    received_digest = signature[len("sha256="):]
-
-    message = f"{request_id}.{timestamp}.".encode() + body
-    expected_digest = hmac.new(
-        key=key.encode(),
-        msg=message,
-        digestmod=hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected_digest, received_digest)
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
@@ -111,12 +73,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(content_length)
 
         request_id = self.headers.get("X-Inkbox-Request-ID", "")
-        timestamp = self.headers.get("X-Inkbox-Timestamp", "")
-        signature = self.headers.get("X-Inkbox-Signature", "")
+        header_map = {k: v for k, v in self.headers.items()}
 
-        if signature:
-            if not verify_signature(
-                body, request_id, timestamp, signature, CONFIG["signing_key"]
+        if header_map.get("X-Inkbox-Signature"):
+            if not verify_webhook(
+                payload=body,
+                headers=header_map,
+                secret=CONFIG["signing_key"],
             ):
                 logger.info(f"[{time.strftime('%H:%M:%S')}] REJECTED -- invalid signature")
                 self.send_response(401)

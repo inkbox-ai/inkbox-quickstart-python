@@ -1,5 +1,7 @@
-"""Inkbox phone media stream WebSocket server.
+"""
 src/inkbox_webhook/media_stream.py
+
+Inkbox phone media stream WebSocket server.
 
 This server handles live call WebSocket sessions. It is intentionally simple:
 - Declares Inkbox-managed STT + TTS via handshake response headers.

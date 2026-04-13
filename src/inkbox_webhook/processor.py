@@ -1,5 +1,7 @@
-"""Deterministic wake trigger for pending Inkbox spool files.
+"""
 src/inkbox_webhook/processor.py
+
+Deterministic wake trigger for pending Inkbox spool files.
 """
 
 from __future__ import annotations
@@ -50,7 +52,7 @@ def process_once() -> int:
         SYSTEM_TEXT,
     ]
     result = subprocess.run(
-        args=cmd,
+        cmd,
         capture_output=True,
         text=True,
         timeout=30,

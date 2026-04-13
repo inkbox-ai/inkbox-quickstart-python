@@ -1,5 +1,7 @@
-"""Phone-specific webhook helpers.
+"""
 src/inkbox_webhook/handlers/phone.py
+
+Phone-specific webhook helpers.
 """
 
 from __future__ import annotations

@@ -76,9 +76,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
         PAYLOADS_DIR.mkdir(exist_ok=True)
         ts_ms = int(time.time() * 1_000)
         payload_file = PAYLOADS_DIR / f"{ts_ms}.json"
-        with open(payload_file, "w") as f:
+        with open(payload_file, mode="w") as f:
             json.dump(
-                {
+                obj={
                     "received_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "path": self.path,
                     "inkbox_request_id": request_id,
@@ -87,7 +87,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     },
                     "payload": payload,
                 },
-                f,
+                fp=f,
                 indent=2,
             )
 
@@ -125,6 +125,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     """CLI entrypoint that serves the webhook receiver forever."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     port = EnvConfig.LISTEN_PORT
     prefix = f"/{EnvConfig.PATH_PREFIX}" if EnvConfig.PATH_PREFIX else "/"
     logger.info(f"Inkbox webhook server listening on :{port} (prefix: {prefix})")

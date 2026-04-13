@@ -146,6 +146,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Inkbox webhook payloads written at runtime
+payloads/
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -204,3 +207,6 @@ __marimo__/
 
 # Claude
 .claude/
+
+# Other server stuff
+payloads/

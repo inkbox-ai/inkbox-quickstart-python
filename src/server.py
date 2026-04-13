@@ -1,144 +1,455 @@
 """
 src/server.py
 
-Inkbox webhook receiver.
+Inkbox sample client/server — a single FastAPI process that:
 
-Listens for incoming webhooks, verifies signatures via ``inkbox.verify_webhook``,
-writes parsed payloads to the payloads directory, and logs a domain-aware summary.
-Downstream processing is the user's responsibility — tail the payloads dir from
-whatever agent/workflow you like.
+1. Receives Inkbox webhooks over HTTP at ``POST /webhook`` (mail events,
+   incoming texts, incoming calls), verifies signatures via
+   ``inkbox.verify_webhook``, writes payloads to disk, and logs a
+   domain-aware summary. Returns an action body for ``incoming_call``
+   events; plain ``200 OK`` for everything else.
+
+2. Handles live phone-media sessions at ``WebSocket /phone/media/ws`` —
+   Inkbox opens this connection once a call is answered, streams
+   transcript events to us, and consumes ``text`` frames we send back
+   for the caller to hear via Inkbox-managed TTS.
+
+Both surfaces live in one ASGI process served by uvicorn. See
+``data_models/webhooks.py`` and ``data_models/phone_media.py`` for the
+exact shapes exchanged on each side — the app parses every incoming
+request using those same Pydantic models.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
 
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, PlainTextResponse
 from inkbox import verify_webhook
+from pydantic import ValidationError
+from starlette.websockets import WebSocketState
 
 from constants import PAYLOADS_DIR
+from data_models.phone_media import (
+    HANDSHAKE_RESPONSE_HEADERS,
+    BargeInEvent,
+    CallContext,
+    StartEvent,
+    StopEvent,
+    TextEvent,
+    TranscriptEvent,
+)
+from data_models.webhooks import (
+    IncomingCallActionResponse,
+    MailWebhookPayload,
+    PhoneIncomingCallWebhookPayload,
+    PhoneIncomingTextWebhookPayload,
+)
 from env_config import EnvConfig
-from handlers.dispatch import build_webhook_http_response, summarize_webhook_payload
 
 logger = logging.getLogger(__name__)
 
+app = FastAPI(
+    title="Inkbox sample client/server",
+    version="0.1.0",
+)
 
-class WebhookHandler(BaseHTTPRequestHandler):
+
+# ---------------------------------------------------------------------------
+# Signature verification helpers
+# ---------------------------------------------------------------------------
+
+
+def _verify_signature_or_raise(body: bytes, headers: dict[str, str]) -> None:
     """
-    HTTP handler that authenticates, stores, and dispatches Inkbox webhooks.
+    Verify an ``X-Inkbox-Signature`` header against ``body``.
+
+    Raises ``HTTPException(401)`` if verification is required and fails.
+    When ``INKBOX_REQUIRE_SIGNATURE`` is false and no signature header
+    is present, returns silently.
     """
+    has_header = bool(headers.get("x-inkbox-signature"))
+    if not has_header:
+        if EnvConfig.INKBOX_REQUIRE_SIGNATURE:
+            logger.info("REJECTED — missing X-Inkbox-Signature header")
+            raise HTTPException(status_code=401, detail="Missing signature")
+        return
+    if not EnvConfig.INKBOX_SIGNING_KEY:
+        logger.info("REJECTED — signature header present but no signing key configured")
+        raise HTTPException(status_code=401, detail="Server not configured to verify")
+    if not verify_webhook(
+        payload=body,
+        headers=headers,
+        secret=EnvConfig.INKBOX_SIGNING_KEY,
+    ):
+        logger.info("REJECTED — invalid signature")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
-    def _match_path(self, suffix: str) -> bool:
-        """Return True if the request path equals ``path_prefix + suffix``."""
-        prefix = f"/{EnvConfig.PATH_PREFIX}" if EnvConfig.PATH_PREFIX else ""
-        expected = prefix + suffix
-        return self.path == expected
 
-    def do_POST(self) -> None:
-        """Handle a POSTed webhook: verify signature, store, log a summary, and reply."""
-        if not self._match_path("/webhook"):
-            self.send_response(404)
-            self.end_headers()
-            return
+# ---------------------------------------------------------------------------
+# Webhook parsing + dispatch
+# ---------------------------------------------------------------------------
 
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length > 10 * 1024 * 1024:
-            self.send_response(413)
-            self.end_headers()
-            return
+# Type alias for whichever concrete webhook payload model parsed successfully.
+ParsedWebhook = (
+    MailWebhookPayload
+    | PhoneIncomingTextWebhookPayload
+    | PhoneIncomingCallWebhookPayload
+)
 
-        body = self.rfile.read(content_length)
 
-        request_id = self.headers.get("X-Inkbox-Request-ID", "")
-        header_map = {k: v for k, v in self.headers.items()}
+def _parse_webhook(body: bytes) -> ParsedWebhook:
+    """
+    Parse ``body`` into the concrete Pydantic model for its shape.
 
-        if header_map.get("X-Inkbox-Signature"):
-            if not verify_webhook(
-                payload=body,
-                headers=header_map,
-                secret=EnvConfig.INKBOX_SIGNING_KEY,
-            ):
-                logger.info(f"[{time.strftime('%H:%M:%S')}] REJECTED -- invalid signature")
-                self.send_response(401)
-                self.end_headers()
-                self.wfile.write(b"Invalid signature")
-                return
+    Tries each known shape in order: mail (enveloped, ``event_type``
+    starts with ``message.``), phone text (enveloped, ``text.*``), phone
+    incoming-call (flat). Raises ``HTTPException(422)`` if none match.
+    """
+    try:
+        data = json.loads(body) if body else {}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON: {exc}") from exc
 
-        payload: dict[str, Any]
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            payload = {"raw": body.decode("utf-8", errors="replace")}
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="Webhook body must be a JSON object")
 
-        PAYLOADS_DIR.mkdir(exist_ok=True)
-        ts_ms = int(time.time() * 1_000)
-        payload_file = PAYLOADS_DIR / f"{ts_ms}.json"
-        with open(payload_file, mode="w") as f:
-            json.dump(
-                obj={
-                    "received_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "path": self.path,
-                    "inkbox_request_id": request_id,
-                    "headers": {
-                        "content-type": self.headers.get("Content-Type", ""),
-                    },
-                    "payload": payload,
-                },
-                fp=f,
-                indent=2,
-            )
+    event_type = data.get("event_type")
+    if isinstance(event_type, str):
+        if event_type.startswith("message."):
+            return MailWebhookPayload.model_validate(data)
+        if event_type.startswith("text."):
+            return PhoneIncomingTextWebhookPayload.model_validate(data)
 
-        logger.info(f"[{time.strftime('%H:%M:%S')}] Saved -> {payload_file.name}")
-        logger.info(summarize_webhook_payload(payload))
+    # No envelope → incoming-call shape.
+    return PhoneIncomingCallWebhookPayload.model_validate(data)
 
-        response_body = build_webhook_http_response(payload)
-        if response_body is not None:
-            body_json = json.dumps(response_body).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body_json)))
-            self.end_headers()
-            self.wfile.write(body_json)
-            return
 
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+def summarize_webhook_payload(payload: ParsedWebhook) -> str:
+    """
+    Return a compact one-line log summary for a parsed webhook payload.
 
-    def do_GET(self) -> None:
-        """Handle a GET, returning 200 only on the ``/health`` path."""
-        if self._match_path("/health"):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
-            return
-        self.send_response(404)
-        self.end_headers()
+    Parameters:
+        payload (ParsedWebhook): A validated webhook model instance.
 
-    def log_message(self, format: str, *args: Any) -> None:
-        """Redirect ``BaseHTTPRequestHandler`` access logs to our logger."""
-        logger.info(f"[{time.strftime('%H:%M:%S')}] {format % args}")
+    Returns:
+        str: Human-readable summary suitable for logging.
+    """
+    if isinstance(payload, MailWebhookPayload):
+        m = payload.data.message
+        return (
+            f"Inkbox mail webhook: {payload.event_type.value}. "
+            f"From: {m.from_address}. "
+            f"Subject: {m.subject or '-'}. "
+            f"Status: {m.status.value}."
+        )
+    if isinstance(payload, PhoneIncomingTextWebhookPayload):
+        t = payload.data.text_message
+        return (
+            f"Inkbox text webhook: {payload.event_type}. "
+            f"From: {t.remote_phone_number} → {t.local_phone_number}. "
+            f"Text: {(t.text or '')[:160]}"
+        )
+    # PhoneIncomingCallWebhookPayload
+    return (
+        f"Inkbox phone webhook: incoming_call. "
+        f"Call ID: {payload.id}. "
+        f"From: {payload.remote_phone_number} → {payload.local_phone_number}. "
+        f"Status: {payload.status.value}."
+    )
+
+
+def build_webhook_http_response(payload: ParsedWebhook) -> IncomingCallActionResponse | None:
+    """
+    Return the response body for webhooks that require one.
+
+    Only incoming-call webhooks expect a structured response. Mail and
+    text webhooks return ``None``; the caller should reply with a plain
+    ``200 OK``.
+
+    Parameters:
+        payload (ParsedWebhook): A validated webhook model instance.
+
+    Returns:
+        IncomingCallActionResponse | None: Response body to send, or
+        ``None`` if no body is required.
+    """
+    if not isinstance(payload, PhoneIncomingCallWebhookPayload):
+        return None
+    if not EnvConfig.INKBOX_PHONE_AUTO_ANSWER:
+        return IncomingCallActionResponse(action="reject")
+    ws_url = (EnvConfig.INKBOX_PHONE_CLIENT_WEBSOCKET_URL or "").strip() or None
+    return IncomingCallActionResponse(action="answer", client_websocket_url=ws_url)
+
+
+# ---------------------------------------------------------------------------
+# Payload persistence
+# ---------------------------------------------------------------------------
+
+
+def _persist_payload(
+    *,
+    body_bytes: bytes,
+    headers: dict[str, str],
+    request_path: str,
+) -> str:
+    """Write the raw webhook body + metadata to ``PAYLOADS_DIR`` and return the filename."""
+    PAYLOADS_DIR.mkdir(exist_ok=True)
+    ts_ms = int(time.time() * 1_000)
+    payload_file = PAYLOADS_DIR / f"{ts_ms}.json"
+    try:
+        raw = json.loads(body_bytes) if body_bytes else {}
+    except json.JSONDecodeError:
+        raw = {"raw": body_bytes.decode("utf-8", errors="replace")}
+    with open(payload_file, mode="w") as f:
+        json.dump(
+            obj={
+                "received_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "path": request_path,
+                "inkbox_request_id": headers.get("x-inkbox-request-id", ""),
+                "headers": {"content-type": headers.get("content-type", "")},
+                "payload": raw,
+            },
+            fp=f,
+            indent=2,
+        )
+    return payload_file.name
+
+
+# ---------------------------------------------------------------------------
+# HTTP routes
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+async def health() -> PlainTextResponse:
+    """Liveness endpoint. Always returns 200 OK."""
+    return PlainTextResponse("OK")
+
+
+@app.post("/webhook", response_model=None)
+async def webhook(request: Request) -> JSONResponse | PlainTextResponse:
+    """
+    Inkbox webhook receiver.
+
+    1. Reads the raw body (needed for HMAC verification — do not parse
+       and re-serialize).
+    2. Verifies ``X-Inkbox-Signature`` if required / present.
+    3. Parses the body into the concrete Pydantic model for its shape.
+    4. Persists the raw payload to ``payloads/<ts_ms>.json``.
+    5. Logs a compact summary.
+    6. Returns an ``IncomingCallActionResponse`` for incoming-call
+       webhooks; a plain ``200 OK`` otherwise.
+    """
+    body = await request.body()
+    if len(body) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Payload too large")
+
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    _verify_signature_or_raise(body, headers)
+
+    try:
+        payload = _parse_webhook(body)
+    except ValidationError as exc:
+        logger.info("REJECTED — validation error: %s", exc)
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    saved_name = _persist_payload(
+        body_bytes=body,
+        headers=headers,
+        request_path=request.url.path,
+    )
+    logger.info("Saved -> %s", saved_name)
+    logger.info(summarize_webhook_payload(payload))
+
+    response_body = build_webhook_http_response(payload)
+    if response_body is not None:
+        return JSONResponse(response_body.model_dump(exclude_none=True))
+    return PlainTextResponse("OK")
+
+
+# ---------------------------------------------------------------------------
+# WebSocket: phone media stream
+# ---------------------------------------------------------------------------
+
+
+def _parse_call_context(headers: Any) -> CallContext:
+    """Parse the ``X-Call-Context`` handshake header into a ``CallContext``."""
+    raw = headers.get("x-call-context", "") if headers else ""
+    if not raw:
+        return CallContext()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return CallContext()
+    if not isinstance(data, dict):
+        return CallContext()
+    try:
+        return CallContext.model_validate(data)
+    except ValidationError:
+        return CallContext()
+
+
+def _verify_ws_handshake_signature(headers: dict[str, str]) -> bool:
+    """
+    Verify the optional signature on a WS upgrade request.
+
+    Per the Inkbox spec, the signed body for a WS handshake is the raw
+    value of the ``X-Call-Context`` header. Returns ``True`` when the
+    request either passes verification or verification is not required
+    and no signature header is present.
+    """
+    has_header = bool(headers.get("x-inkbox-signature"))
+    if not has_header:
+        return not EnvConfig.INKBOX_REQUIRE_SIGNATURE
+    if not EnvConfig.INKBOX_SIGNING_KEY:
+        return False
+    call_context = headers.get("x-call-context", "")
+    return verify_webhook(
+        payload=call_context.encode("utf-8"),
+        headers=headers,
+        secret=EnvConfig.INKBOX_SIGNING_KEY,
+    )
+
+
+def _build_reply_text(user_text: str) -> str:
+    """Return a canned conversational reply for a final transcript chunk."""
+    if not user_text:
+        return "I’m here — can you repeat that?"
+    normalized = user_text.lower()
+    if any(g in normalized for g in ("hello", "hi", "hey")):
+        return "Hey — I hear you. What do you need?"
+    if "bye" in normalized or "goodbye" in normalized:
+        return "Got it. Talk soon — goodbye."
+    compact = re.sub(r"\s+", " ", user_text).strip()
+    if len(compact) > 220:
+        compact = compact[:217] + "..."
+    return f"Got it. You said: {compact}"
+
+
+async def _send_text_reply(websocket: WebSocket, text: str) -> None:
+    """Send a single-shot text reply as ``delta`` + ``done`` frames."""
+    await websocket.send_text(TextEvent(delta=text).model_dump_json(exclude_none=True))
+    await websocket.send_text(TextEvent(done=True).model_dump_json(exclude_none=True))
+
+
+@app.websocket("/phone/media/ws")
+async def phone_media_ws(websocket: WebSocket) -> None:
+    """
+    Live phone-media WebSocket handler.
+
+    Inkbox opens this connection once a call is answered. We optionally
+    verify the handshake signature, accept the upgrade with the
+    ``X-Use-Inkbox-*`` opt-in headers, then loop over JSON text frames:
+    platform events in, outbound ``text`` frames out.
+    """
+    headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in websocket.headers.raw}
+    if not _verify_ws_handshake_signature(headers):
+        logger.info("Call WS REJECTED — invalid or missing handshake signature")
+        await websocket.close(code=1008)
+        return
+
+    call = _parse_call_context(headers)
+    await websocket.accept(
+        headers=[
+            (k.lower().encode(), v.encode())
+            for k, v in HANDSHAKE_RESPONSE_HEADERS.items()
+        ],
+    )
+    logger.info(
+        "Call WS connected call_id=%s local=%s direction=%s",
+        call.call_id, call.phone_number, call.direction,
+    )
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            event = data.get("event")
+            if event == "start":
+                try:
+                    StartEvent.model_validate(data)
+                except ValidationError:
+                    pass
+                continue
+            if event == "stop":
+                try:
+                    parsed_stop = StopEvent.model_validate(data)
+                    logger.info(
+                        "Call WS stop call_id=%s reason=%s",
+                        call.call_id, parsed_stop.reason,
+                    )
+                except ValidationError:
+                    logger.info("Call WS stop call_id=%s", call.call_id)
+                break
+            if event == "barge_in":
+                try:
+                    BargeInEvent.model_validate(data)
+                except ValidationError:
+                    pass
+                continue
+            if event == "transcript":
+                try:
+                    transcript = TranscriptEvent.model_validate(data)
+                except ValidationError:
+                    continue
+                if not transcript.is_final:
+                    continue
+                reply = _build_reply_text(transcript.text)
+                await _send_text_reply(websocket, reply)
+                continue
+            # ignore unknown / unmodelled events (e.g. media) — extend here
+    except WebSocketDisconnect:
+        logger.info("Call WS closed call_id=%s", call.call_id)
+    finally:
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            try:
+                await websocket.close()
+            except RuntimeError:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
-    """CLI entrypoint that serves the webhook receiver forever."""
+    """CLI entrypoint: configure logging and serve the FastAPI app via uvicorn."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    port = EnvConfig.LISTEN_PORT
-    prefix = f"/{EnvConfig.PATH_PREFIX}" if EnvConfig.PATH_PREFIX else "/"
-    logger.info(f"Inkbox webhook server listening on :{port} (prefix: {prefix})")
-    logger.info(f"Payloads directory: {PAYLOADS_DIR}")
-    server = HTTPServer(("0.0.0.0", port), WebhookHandler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        logger.info("\nShutting down")
-        server.server_close()
+    if EnvConfig.INKBOX_REQUIRE_SIGNATURE and not EnvConfig.INKBOX_SIGNING_KEY:
+        raise RuntimeError(
+            "INKBOX_SIGNING_KEY is required when INKBOX_REQUIRE_SIGNATURE=true "
+            "(the default). Set the key in .env or export INKBOX_REQUIRE_SIGNATURE=false "
+            "for local testing.",
+        )
+    logger.info(
+        "Inkbox sample client/server listening on :%d (verify signatures: %s)",
+        EnvConfig.LISTEN_PORT,
+        EnvConfig.INKBOX_REQUIRE_SIGNATURE,
+    )
+    logger.info("Payloads directory: %s", PAYLOADS_DIR)
+    uvicorn.run(
+        "server:app",
+        host="0.0.0.0",
+        port=EnvConfig.LISTEN_PORT,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":

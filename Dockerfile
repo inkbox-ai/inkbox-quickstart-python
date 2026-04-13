@@ -19,4 +19,4 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8080
 
-CMD ["inkbox-webhook"]
+CMD ["inkbox-server"]

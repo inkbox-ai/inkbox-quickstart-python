@@ -3,7 +3,7 @@
 [project]
 name = "sample-client-server"
 version = "0.1.0"
-description = "Sample Inkbox webhook receiver + phone media stream server"
+description = "Sample Inkbox webhook receiver + phone media WebSocket server (single FastAPI process)"
 requires-python = ">=3.12"
 dependencies = [
   "aiohttp>=3.13.4", # async HTTP client/server
@@ -19,8 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-inkbox-webhook = "server:main"
-inkbox-phone-media = "media_stream:main"
+inkbox-server = "server:main"
 
 [build-system]
 requires = ["hatchling"]

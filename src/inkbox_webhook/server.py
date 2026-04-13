@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, cast
 
 from inkbox import verify_webhook
-
 from inkbox_webhook.config import Config, get_config
 from inkbox_webhook.handlers.dispatch import (
     build_webhook_http_response,

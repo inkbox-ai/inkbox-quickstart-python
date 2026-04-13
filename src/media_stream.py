@@ -40,8 +40,16 @@ def _safe_json(s: str) -> dict[str, Any]:
 
 @dataclass
 class CallSession:
-    """Per-connection state extracted from the handshake and call lifecycle events."""
+    """
+    Per-connection state extracted from the handshake and call lifecycle events.
 
+    Attributes:
+        call_id (str): Inkbox call ID parsed from the ``X-Call-Context`` handshake header.
+        local_phone_number (str): Inkbox-side (local) phone number on the call.
+        remote_phone_number (str): Remote party's phone number.
+        direction (str): Call direction (e.g. ``"inbound"`` or ``"outbound"``).
+        call_control_id (str): Telnyx call-control ID, populated from the ``start`` event.
+    """
     call_id: str = ""
     local_phone_number: str = ""
     remote_phone_number: str = ""
@@ -195,7 +203,10 @@ async def _run() -> None:
 
 def main() -> None:
     """CLI entrypoint that configures logging and runs the media-stream server."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     asyncio.run(_run())
 
 

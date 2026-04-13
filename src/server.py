@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
-    """HTTP handler that authenticates, stores, and dispatches Inkbox webhooks."""
+    """
+    HTTP handler that authenticates, stores, and dispatches Inkbox webhooks.
+    """
 
     def _match_path(self, suffix: str) -> bool:
         """Return True if the request path equals ``path_prefix + suffix``."""

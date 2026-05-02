@@ -210,3 +210,6 @@ __marimo__/
 
 # Other server stuff
 payloads/
+
+# Inkbox tunnel state (connect secret + passthrough keypair/cert)
+.inkbox-tunnel-state/

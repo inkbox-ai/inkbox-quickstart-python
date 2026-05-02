@@ -22,9 +22,11 @@ request using those same Pydantic models.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
@@ -50,14 +52,40 @@ from data_models.webhooks import (
     PhoneIncomingTextWebhookPayload,
 )
 from env_config import EnvConfig
-from ngrok_bootstrap import setup_ngrok_and_patch_inkbox
+from inkbox_tunnel_bootstrap import (
+    InkboxTunnelClient,
+    bootstrap_tunnel,
+    patch_inkbox_objects_to_tunnel,
+)
 from phone_agent import PhoneAgent
 
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run the persistent tunnel-client connection for the life of the app."""
+    client: InkboxTunnelClient | None = getattr(app.state, "tunnel_client", None)
+    task: asyncio.Task[None] | None = None
+    if client is not None:
+        task = asyncio.create_task(client.serve_forever())
+    try:
+        yield
+    finally:
+        if client is not None:
+            await client.aclose()
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
 app = FastAPI(
     title="Inkbox sample client/server",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -182,8 +210,9 @@ def build_webhook_http_response(payload: ParsedWebhook) -> IncomingCallActionRes
     """
     if not isinstance(payload, PhoneIncomingCallWebhookPayload):
         return None
-    # client_websocket_url is stored on the phone number itself (patched at
-    # boot by ngrok_bootstrap), so we don't need to override it here.
+    # client_websocket_url is stored on the phone number itself (patched
+    # at boot by inkbox_tunnel_bootstrap), so we don't need to override
+    # it here.
     return IncomingCallActionResponse(action="answer")
 
 
@@ -434,7 +463,25 @@ def main() -> None:
         EnvConfig.INKBOX_REQUIRE_SIGNATURE,
     )
     logger.info("Payloads directory: %s", PAYLOADS_DIR)
-    setup_ngrok_and_patch_inkbox()
+
+    # 1. Ensure the Inkbox tunnel exists (mode-aware). For passthrough
+    #    this also generates the keypair, gets a signed cert via
+    #    /sign-csr, and persists everything to the state dir.
+    bundle = bootstrap_tunnel()
+
+    # 2. Patch all phone numbers + mailboxes to the public host.
+    patch_inkbox_objects_to_tunnel(bundle.public_host)
+
+    # 3. Build + register the tunnel client. Started in the lifespan hook.
+    app.state.tunnel_client = InkboxTunnelClient(
+        tunnel_id=bundle.tunnel_id,
+        secret=bundle.secret,
+        zone=EnvConfig.INKBOX_TUNNEL_ZONE,
+        pool_size=EnvConfig.INKBOX_TUNNEL_POOL_SIZE,
+        local_app=app,
+        tls_terminator=bundle.tls_terminator,
+    )
+
     uvicorn.run(
         "server:app",
         host="0.0.0.0",

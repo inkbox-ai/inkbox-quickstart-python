@@ -10,7 +10,7 @@ dependencies = [
   # SDK provides the tunnel runtime (bootstrap, h2 control, passthrough
   # TLS termination, h2-transcode forwarding) and the org-level resources
   # (mailboxes, phone numbers, etc.) we used to call directly via httpx.
-  "inkbox>=0.3.0",
+  "inkbox==0.3.1",
   "openai>=1.99.0",
   "pydantic>=2.11.4",
   "python-dotenv>=1.1.0",
@@ -29,8 +29,3 @@ build-backend = "hatchling.build"
 only-include = ["src"]
 sources = { "src" = "" }
 
-# Use the local SDK source instead of the published version on PyPI.
-# Lets us iterate on tunnel client code in ~/inkbox/sdk/python and test
-# from this sample server without a publish round-trip.
-[tool.uv.sources]
-inkbox = { path = "/home/ec2-user/inkbox/sdk/python", editable = true }

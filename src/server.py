@@ -479,6 +479,7 @@ def _patch_inkbox_objects_to_tunnel(client: Inkbox, public_host: str) -> None:
             incoming_call_webhook_url=webhook_url,
             incoming_text_webhook_url=webhook_url,
             client_websocket_url=ws_url,
+            incoming_call_action="webhook",
         )
         logger.info(
             "Patched phone number %s -> %s / %s",
@@ -572,9 +573,7 @@ def main() -> None:
         inkbox,
         name=EnvConfig.INKBOX_TUNNEL_NAME,
         forward_to=forward_to,
-        tls_mode=EnvConfig.INKBOX_TUNNEL_TLS_MODE,
         state_dir=Path(EnvConfig.INKBOX_TUNNEL_STATE_DIR),
-        secret=EnvConfig.INKBOX_TUNNEL_SECRET or None,
         data_plane_zone=EnvConfig.INKBOX_TUNNEL_ZONE or None,
         pool_size=EnvConfig.INKBOX_TUNNEL_POOL_SIZE,
     )

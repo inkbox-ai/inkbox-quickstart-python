@@ -170,9 +170,44 @@ class MailWebhookMessageData(BaseModel):
     created_at: datetime | None = None
 
 
+MailContactBucket = Literal["from", "to", "cc", "bcc"]
+
+
+class WebhookContact(BaseModel):
+    """Address-book match on a phone or text webhook event."""
+    id: UUID
+    name: str
+
+
+class WebhookAgentIdentity(BaseModel):
+    """Identity match on a phone or text webhook event."""
+    id: UUID
+    agent_handle: str
+    display_name: str | None = None
+
+
+class WebhookMailContact(BaseModel):
+    """Per-recipient address-book match on a mail webhook event."""
+    bucket: MailContactBucket
+    address: str
+    id: UUID
+    name: str
+
+
+class WebhookMailAgentIdentity(BaseModel):
+    """Per-recipient identity match on a mail webhook event."""
+    bucket: MailContactBucket
+    address: str
+    id: UUID
+    agent_handle: str
+    display_name: str | None = None
+
+
 class MailWebhookData(BaseModel):
     """Wrapper object under the mail webhook ``data`` field."""
     message: MailWebhookMessageData
+    contacts: list[WebhookMailContact] = Field(default_factory=list)
+    agent_identities: list[WebhookMailAgentIdentity] = Field(default_factory=list)
 
 
 class MailWebhookPayload(BaseModel):
@@ -219,6 +254,8 @@ class PhoneIncomingTextData(BaseModel):
 class PhoneIncomingTextWebhookData(BaseModel):
     """Wrapper object under the incoming-text webhook ``data`` field."""
     text_message: PhoneIncomingTextData
+    contacts: list[WebhookContact] = Field(default_factory=list)
+    agent_identities: list[WebhookAgentIdentity] = Field(default_factory=list)
 
 
 class PhoneIncomingTextWebhookPayload(BaseModel):
@@ -280,6 +317,8 @@ class PhoneIncomingCallWebhookPayload(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     rate_limit: RateLimitInfo | None = None
+    contacts: list[WebhookContact] = Field(default_factory=list)
+    agent_identities: list[WebhookAgentIdentity] = Field(default_factory=list)
 
 
 # Response body this server returns to Inkbox _________________________________________________

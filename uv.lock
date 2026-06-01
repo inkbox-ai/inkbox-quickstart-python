@@ -342,8 +342,8 @@ wheels = [
 
 [[package]]
 name = "inkbox"
-version = "0.4.0"
-source = { editable = "/home/ec2-user/inkbox/sdk/python" }
+version = "0.4.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "argon2-cffi" },
     { name = "cryptography" },
@@ -351,20 +351,10 @@ dependencies = [
     { name = "h2" },
     { name = "httpx" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "argon2-cffi", specifier = ">=23.1" },
-    { name = "cryptography", specifier = ">=43.0" },
-    { name = "h11", specifier = ">=0.14" },
-    { name = "h2", specifier = ">=4.1" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+sdist = { url = "https://files.pythonhosted.org/packages/7c/0f/0c9d0df2b46ad46a95a78a671325ce214fc0a0271dc7af742417c59d34d1/inkbox-0.4.6.tar.gz", hash = "sha256:fb44ee941bc4203e32ca023572a95273992c6437ff5f007ee3aad89e4575a26a", size = 230362, upload-time = "2026-05-29T18:10:33.389Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/4f/e91a8e8eecd32e6abee4a1586fb9e65c4b54f9b5c3700915e23a834322a6/inkbox-0.4.6-py3-none-any.whl", hash = "sha256:a56ab843958a8b2d0f2d363d608986ec526eab3593a9324a48fc7faed9f87eff", size = 185124, upload-time = "2026-05-29T18:10:32.144Z" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "jiter"
@@ -633,7 +623,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.12" },
-    { name = "inkbox", editable = "/home/ec2-user/inkbox/sdk/python" },
+    { name = "inkbox", specifier = "==0.4.6" },
     { name = "openai", specifier = ">=1.99.0" },
     { name = "pydantic", specifier = ">=2.11.4" },
     { name = "python-dotenv", specifier = ">=1.1.0" },

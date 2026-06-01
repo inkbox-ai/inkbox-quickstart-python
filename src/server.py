@@ -477,9 +477,14 @@ def _patch_inkbox_objects_to_tunnel(client: Inkbox, public_host: str) -> None:
         client.phone_numbers.update(
             number.id,
             incoming_call_webhook_url=webhook_url,
-            incoming_text_webhook_url=webhook_url,
             client_websocket_url=ws_url,
             incoming_call_action="webhook",
+        )
+        _upsert_subscription(
+            client,
+            phone_number_id=number.id,
+            url=webhook_url,
+            event_types=["text.received"],
         )
         logger.info(
             "Patched phone number %s -> %s / %s",
@@ -489,7 +494,12 @@ def _patch_inkbox_objects_to_tunnel(client: Inkbox, public_host: str) -> None:
 
     mailbox_count = 0
     for mailbox in client.mailboxes.list():
-        client.mailboxes.update(mailbox.email_address, webhook_url=webhook_url)
+        _upsert_subscription(
+            client,
+            mailbox_id=mailbox.id,
+            url=webhook_url,
+            event_types=["message.received"],
+        )
         logger.info(
             "Patched mailbox %s -> %s", mailbox.email_address, webhook_url,
         )
@@ -498,6 +508,38 @@ def _patch_inkbox_objects_to_tunnel(client: Inkbox, public_host: str) -> None:
     logger.info(
         "Inkbox objects patched: %d phone number(s), %d mailbox(es) -> %s",
         phone_count, mailbox_count, public_host,
+    )
+
+
+def _upsert_subscription(
+    client: Inkbox,
+    *,
+    url: str,
+    event_types: list[str],
+    mailbox_id: Any = None,
+    phone_number_id: Any = None,
+) -> None:
+    """Idempotently attach a webhook subscription to a mailbox or phone number.
+
+    Re-running the sample shouldn't double-fire webhooks. We list the
+    subscriptions for the owning resource, update the one matching
+    ``url`` if found, and create otherwise.
+    """
+    existing = client.webhooks.subscriptions.list(
+        mailbox_id=mailbox_id,
+        phone_number_id=phone_number_id,
+    )
+    for sub in existing:
+        if sub.url == url:
+            client.webhooks.subscriptions.update(
+                sub.id, event_types=event_types,
+            )
+            return
+    client.webhooks.subscriptions.create(
+        url=url,
+        event_types=event_types,
+        mailbox_id=mailbox_id,
+        phone_number_id=phone_number_id,
     )
 
 

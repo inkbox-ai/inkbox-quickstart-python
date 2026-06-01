@@ -66,19 +66,26 @@ async def run_realtime_bridge(
     client = AsyncOpenAI(api_key=api_key)
     stream_id: str | None = None
 
-    async with client.beta.realtime.connect(model=model) as conn:
+    async with client.realtime.connect(model=model) as conn:
         await conn.session.update(
             session={
-                "modalities": ["audio", "text"],
+                "type": "realtime",
+                "output_modalities": ["audio"],
                 "instructions": REALTIME_SYSTEM_PROMPT,
-                "voice": REALTIME_VOICE,
-                "input_audio_format": "g711_ulaw",
-                "output_audio_format": "g711_ulaw",
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 600,
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcmu"},
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "threshold": 0.5,
+                            "prefix_padding_ms": 300,
+                            "silence_duration_ms": 600,
+                        },
+                    },
+                    "output": {
+                        "format": {"type": "audio/pcmu"},
+                        "voice": REALTIME_VOICE,
+                    },
                 },
             }
         )
@@ -155,7 +162,7 @@ async def run_realtime_bridge(
                     event_type_counts[etype] = event_type_counts.get(etype, 0) + 1
                     if event_type_counts[etype] <= 2:
                         logger.info("Realtime got openai event call_id=%s type=%s", call_id, etype)
-                    if etype == "response.audio.delta":
+                    if etype == "response.output_audio.delta":
                         delta_b64 = getattr(event, "delta", None)
                         if not delta_b64:
                             continue
@@ -176,7 +183,7 @@ async def run_realtime_bridge(
                             out["stream_id"] = stream_id
                         await websocket.send_text(json.dumps(out))
                         continue
-                    if etype == "response.audio.done":
+                    if etype == "response.output_audio.done":
                         if stream_id:
                             await websocket.send_text(json.dumps({
                                 "event": "audio_done",

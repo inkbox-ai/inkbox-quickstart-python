@@ -342,7 +342,7 @@ wheels = [
 
 [[package]]
 name = "inkbox"
-version = "0.4.6"
+version = "0.4.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "argon2-cffi" },
@@ -351,9 +351,9 @@ dependencies = [
     { name = "h2" },
     { name = "httpx" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/0f/0c9d0df2b46ad46a95a78a671325ce214fc0a0271dc7af742417c59d34d1/inkbox-0.4.6.tar.gz", hash = "sha256:fb44ee941bc4203e32ca023572a95273992c6437ff5f007ee3aad89e4575a26a", size = 230362, upload-time = "2026-05-29T18:10:33.389Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1f/ff/b97b7adfda1edbb689f2a98c874576ba150f815ad81f38fbeafbf6a2f00a/inkbox-0.4.8.tar.gz", hash = "sha256:a6220dee3c12fc66fa531ddd1bc15335bfc458ed16760dd3539dfededcd5861b", size = 290697, upload-time = "2026-06-10T20:37:45.616Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/4f/e91a8e8eecd32e6abee4a1586fb9e65c4b54f9b5c3700915e23a834322a6/inkbox-0.4.6-py3-none-any.whl", hash = "sha256:a56ab843958a8b2d0f2d363d608986ec526eab3593a9324a48fc7faed9f87eff", size = 185124, upload-time = "2026-05-29T18:10:32.144Z" },
+    { url = "https://files.pythonhosted.org/packages/18/9b/4788fa7760f512fec81715d151ed071a1a2a119514812a0e045d46bddadd/inkbox-0.4.8-py3-none-any.whl", hash = "sha256:0c01b5fa66f2a5ef9d583cd17705e56f2ef4422228b3a2b84b005e8474432435", size = 203715, upload-time = "2026-06-10T20:37:44.47Z" },
 ]
 
 [[package]]
@@ -623,7 +623,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.12" },
-    { name = "inkbox", specifier = "==0.4.6" },
+    { name = "inkbox", specifier = "==0.4.8" },
     { name = "openai", specifier = ">=1.99.0" },
     { name = "pydantic", specifier = ">=2.11.4" },
     { name = "python-dotenv", specifier = ">=1.1.0" },

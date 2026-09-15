@@ -55,6 +55,8 @@ def ensure_received_subscription(client: Inkbox, identity_id, url: str) -> None:
                 )
             return
         except InkboxAPIError as exc:
+            if "active webhook subscriptions" in str(exc).lower():
+                raise  # Capacity is not a concurrent edit; retain the actionable API error.
             if exc.status_code not in (404, 409):
                 raise
     raise RuntimeError(

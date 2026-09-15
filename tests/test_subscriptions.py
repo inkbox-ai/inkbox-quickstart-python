@@ -182,3 +182,11 @@ def test_deleted_during_update_rereads_merged_survivor():
     ensure_received_subscription(c, "identity", URL)
     assert c.webhooks.subscriptions.list.call_count == 2
     c.webhooks.subscriptions.create.assert_not_called()
+
+
+def test_capacity_conflict_is_actionable_without_retries():
+    c = client([])
+    c.webhooks.subscriptions.create.side_effect = InkboxAPIError(409, "Owner already has 20 active webhook subscriptions (max 20). Delete one before creating another.")
+    with pytest.raises(InkboxAPIError, match="max 20"):
+        ensure_received_subscription(c, "identity", URL)
+    assert c.webhooks.subscriptions.list.call_count == 1

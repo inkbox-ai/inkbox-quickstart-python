@@ -62,7 +62,7 @@ INKBOX_TUNNEL_NAME=demo-acme  # step 4
 OPENAI_API_KEY=sk-...         # step 5
 ```
 
-That's it — you're ready to run. On startup the server will create the Inkbox tunnel (first run) or reuse it (subsequent runs), PATCH every phone number + mailbox on your identity to point at `{INKBOX_TUNNEL_NAME}.development.inkboxwire.com`, open the persistent HTTP/2 data-plane connection, and start serving webhooks + the phone-media WebSocket. The per-tunnel `connect_secret` is written once under `.inkbox-tunnel-state/` (chmod 600); for `passthrough` mode the private key + LE-signed cert chain live there too.
+That's it — you're ready to run. On startup the server will create the Inkbox tunnel (first run) or reuse it (subsequent runs), configure only the identity named by `INKBOX_TUNNEL_NAME` to point at `{INKBOX_TUNNEL_NAME}.development.inkboxwire.com`, open the persistent HTTP/2 data-plane connection, and start serving webhooks + the phone-media WebSocket. The per-tunnel `connect_secret` is written once under `.inkbox-tunnel-state/` (chmod 600); for `passthrough` mode the private key + LE-signed cert chain live there too.
 
 ## Configuration notes
 
@@ -122,3 +122,9 @@ uv run inkbox-server   # webhooks + phone media WS on :8080
 - `POST /webhook` — Inkbox webhook receiver. Verifies `X-Inkbox-Signature` via `inkbox.verify_webhook`, parses the body into a `MailWebhookPayload`, `PhoneIncomingTextWebhookPayload`, or `PhoneIncomingCallWebhookPayload`, writes the raw payload to `payloads/<ts>.json`, and returns `200 OK` (or an `IncomingCallActionResponse` body for `incoming_call` events).
 - `WebSocket /phone/media/ws` — Live phone-media session. Inkbox opens this once a call is answered; we optionally verify the handshake signature, accept with `X-Use-Inkbox-{Text-To-Speech,Speech-To-Text}: true` headers, and respond to final `transcript` frames with outbound `text` replies.
 - `GET /health` — liveness check.
+
+## Identity webhook setup
+
+Requires SDK 0.6.12 and an API supporting identity-owned subscriptions and revision-checked updates. Startup subscribes the configured identity to `message.received` and `text.received`, even before either channel is provisioned. It preserves additional events, context, and unrelated destinations; concurrent changes are re-read before retrying. Ambiguous existing configurations fail startup without deleting subscriptions. Incoming-call routing is configured separately when the identity has a phone or iMessage. Existing signing keys are never rotated.
+
+The checkout locks SDK 0.6.12 to an immutable public Git revision until the package release is available. Run `uv sync --locked` and `uv run --locked pytest` to install and test the exact dependency.

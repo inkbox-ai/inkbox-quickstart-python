@@ -8,9 +8,9 @@ requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115.12",
   # SDK provides the tunnel runtime (bootstrap, h2 control, passthrough
-  # TLS termination, h2-transcode forwarding) and the org-level resources
-  # (mailboxes, phone numbers, etc.) we used to call directly via httpx.
-  "inkbox==0.4.8",
+  # TLS termination and h2-transcode forwarding), identity-owned webhooks,
+  # and conditional subscription updates.
+  "inkbox==0.6.12",
   "openai>=1.99.0",
   "pydantic>=2.11.4",
   "python-dotenv>=1.1.0",
@@ -30,3 +30,13 @@ only-include = ["src"]
 sources = { "src" = "" }
 
 
+
+[tool.uv.sources]
+inkbox = { git = "https://github.com/inkbox-ai/inkbox.git", rev = "9f54e8dbb4a540c5f721c26a296d47f7b1978b0f", subdirectory = "sdk/python" }
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

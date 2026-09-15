@@ -56,6 +56,7 @@ from data_models.webhooks import (
 from env_config import EnvConfig
 from phone_agent import PhoneAgent
 from realtime_phone_agent import run_realtime_bridge
+from subscriptions import patch_identity_to_tunnel
 
 
 # Handshake response headers used when ``USE_OPENAI_REALTIME=true``: opt
@@ -462,87 +463,6 @@ app.include_router(router)
 # ---------------------------------------------------------------------------
 
 
-def _patch_inkbox_objects_to_tunnel(client: Inkbox, public_host: str) -> None:
-    """Repoint every phone number + mailbox in the org at ``public_host``.
-
-    Equivalent to the prior direct-httpx implementation, but routed
-    through the SDK so we exercise its ``phone_numbers`` and
-    ``mailboxes`` resources.
-    """
-    webhook_url = f"https://{public_host}/webhook"
-    ws_url = f"wss://{public_host}/phone/media/ws"
-
-    phone_count = 0
-    for number in client.phone_numbers.list():
-        client.phone_numbers.update(
-            number.id,
-            incoming_call_webhook_url=webhook_url,
-            client_websocket_url=ws_url,
-            incoming_call_action="webhook",
-        )
-        _upsert_subscription(
-            client,
-            phone_number_id=number.id,
-            url=webhook_url,
-            event_types=["text.received"],
-        )
-        logger.info(
-            "Patched phone number %s -> %s / %s",
-            number.number, webhook_url, ws_url,
-        )
-        phone_count += 1
-
-    mailbox_count = 0
-    for mailbox in client.mailboxes.list():
-        _upsert_subscription(
-            client,
-            mailbox_id=mailbox.id,
-            url=webhook_url,
-            event_types=["message.received"],
-        )
-        logger.info(
-            "Patched mailbox %s -> %s", mailbox.email_address, webhook_url,
-        )
-        mailbox_count += 1
-
-    logger.info(
-        "Inkbox objects patched: %d phone number(s), %d mailbox(es) -> %s",
-        phone_count, mailbox_count, public_host,
-    )
-
-
-def _upsert_subscription(
-    client: Inkbox,
-    *,
-    url: str,
-    event_types: list[str],
-    mailbox_id: Any = None,
-    phone_number_id: Any = None,
-) -> None:
-    """Idempotently attach a webhook subscription to a mailbox or phone number.
-
-    Re-running the sample shouldn't double-fire webhooks. We list the
-    subscriptions for the owning resource, update the one matching
-    ``url`` if found, and create otherwise.
-    """
-    existing = client.webhooks.subscriptions.list(
-        mailbox_id=mailbox_id,
-        phone_number_id=phone_number_id,
-    )
-    for sub in existing:
-        if sub.url == url:
-            client.webhooks.subscriptions.update(
-                sub.id, event_types=event_types,
-            )
-            return
-    client.webhooks.subscriptions.create(
-        url=url,
-        event_types=event_types,
-        mailbox_id=mailbox_id,
-        phone_number_id=phone_number_id,
-    )
-
-
 def _run_uvicorn_in_background(port: int) -> uvicorn.Server:
     """Start uvicorn on ``port`` in a daemon thread and block until ready.
 
@@ -622,7 +542,7 @@ def main() -> None:
     public_host = listener.tunnel.public_host
     logger.info("Tunnel ready at %s", listener.public_url)
 
-    _patch_inkbox_objects_to_tunnel(inkbox, public_host)
+    patch_identity_to_tunnel(inkbox, public_host, EnvConfig.INKBOX_TUNNEL_NAME)
 
     # uvicorn must be listening before the runtime starts forwarding.
     server = _run_uvicorn_in_background(EnvConfig.LISTEN_PORT)

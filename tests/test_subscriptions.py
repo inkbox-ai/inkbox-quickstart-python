@@ -2,7 +2,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock
 import pytest
 from inkbox.exceptions import InkboxAPIError
-from subscriptions import ensure_received_subscription, patch_identity_to_tunnel
+from subscriptions import RECEIVED_EVENTS, ensure_received_subscription, patch_identity_to_tunnel
 
 URL = "https://example.test/webhook"
 
@@ -155,3 +155,30 @@ def test_incoming_call_action_remains_separate():
         client_websocket_url="wss://example.test/phone/media/ws",
         incoming_call_action="webhook",
     )
+
+
+def test_legacy_split_coverage_is_adopted_without_replacement():
+    c = client([row(agent_identity_id=None, event_types=["message.received"]),
+                row(id="text", agent_identity_id=None, event_types=["text.received"],
+                    context_config={"email": None, "texts": None, "calls": None})])
+    ensure_received_subscription(c, "identity", URL)
+    c.webhooks.subscriptions.update.assert_not_called()
+    c.webhooks.subscriptions.create.assert_not_called()
+    c.webhooks.subscriptions.delete.assert_not_called()
+
+
+def test_different_legacy_contexts_remain_ambiguous():
+    c = client([row(event_types=["message.received"], context_config={"email": {"mode": "count", "count": 2}}),
+                row(id="text", event_types=["text.received"], context_config=None)])
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        ensure_received_subscription(c, "identity", URL)
+    c.webhooks.subscriptions.update.assert_not_called()
+
+
+def test_deleted_during_update_rereads_merged_survivor():
+    c = client([])
+    c.webhooks.subscriptions.list.side_effect = [[row()], [row(id="survivor", event_types=RECEIVED_EVENTS)]]
+    c.webhooks.subscriptions.update.side_effect = InkboxAPIError(404, "deleted")
+    ensure_received_subscription(c, "identity", URL)
+    assert c.webhooks.subscriptions.list.call_count == 2
+    c.webhooks.subscriptions.create.assert_not_called()

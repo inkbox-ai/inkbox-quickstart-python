@@ -12,7 +12,7 @@ def ensure_received_subscription(client: Inkbox, identity_id, url: str) -> None:
         matches = [row for row in rows if row.url == url]
         # This receiver uses signatures, not bearer tokens. Never take over a
         # distinct configuration or guess between rows with different contexts.
-        if len(matches) > 1 or any(
+        if any(
             (row.agent_identity_id or row.owner_identity_id) != identity_id
             or row.has_auth_token
             or row.auth_token is not None
@@ -21,6 +21,17 @@ def ensure_received_subscription(client: Inkbox, identity_id, url: str) -> None:
             raise RuntimeError(
                 "Webhook destination has an ambiguous owner or configuration; reconcile it before startup."
             )
+        if len(matches) > 1:
+            # Existing split subscriptions can already cover this receiver.
+            # Adopt them without choosing a survivor or changing their context.
+            contexts = [
+                {key: value for key, value in (getattr(row, "context_config", None) or {}).items() if value is not None}
+                for row in matches
+            ]
+            covered = {event for row in matches for event in row.event_types}
+            if set(RECEIVED_EVENTS) <= covered and all(context == contexts[0] for context in contexts):
+                return
+            raise RuntimeError("Webhook destination has ambiguous event coverage or contexts; reconcile it before startup.")
         match = matches[0] if matches else None
         try:
             if match is None:
@@ -44,7 +55,7 @@ def ensure_received_subscription(client: Inkbox, identity_id, url: str) -> None:
                 )
             return
         except InkboxAPIError as exc:
-            if exc.status_code != 409:
+            if exc.status_code not in (404, 409):
                 raise
     raise RuntimeError(
         "Webhook configuration changed repeatedly; retry startup after concurrent edits finish."

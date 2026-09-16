@@ -125,6 +125,6 @@ uv run inkbox-server   # webhooks + phone media WS on :8080
 
 ## Identity webhook setup
 
-Requires SDK 0.7.1 and an API supporting identity-owned subscriptions and revision-checked updates. Startup subscribes the configured identity to `message.received` and `text.received`, even before either channel is provisioned. It preserves additional events, context, and unrelated destinations; concurrent changes are re-read before retrying. Ambiguous existing configurations fail startup without deleting subscriptions. Incoming-call routing is configured separately when the identity has a phone or iMessage. Existing signing keys are never rotated.
+Requires SDK 0.7.2 and an API supporting identity-owned subscriptions and revision-checked updates. Startup subscribes the configured identity to `message.received` and `text.received`, even before either channel is provisioned. It preserves additional events, context, and unrelated destinations; concurrent changes are re-read before retrying. Ambiguous existing configurations fail startup without deleting subscriptions. Incoming-call routing is configured separately when the identity has a phone or iMessage. Existing signing keys are never rotated.
 
-The checkout locks SDK 0.7.1 to an immutable public Git revision until the package release is available. Run `uv sync --locked` and `uv run --locked pytest` to install and test the exact dependency.
+The checkout locks SDK 0.7.2 to an immutable public Git revision until the package release is available. Run `uv sync --locked` and `uv run --locked pytest` to install and test the exact dependency.

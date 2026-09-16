@@ -351,8 +351,8 @@ wheels = [
 
 [[package]]
 name = "inkbox"
-version = "0.7.1"
-source = { git = "https://github.com/inkbox-ai/inkbox.git?subdirectory=sdk%2Fpython&rev=df6807c3502007e3510706d868fbcf143743977a#df6807c3502007e3510706d868fbcf143743977a" }
+version = "0.7.2"
+source = { git = "https://github.com/inkbox-ai/inkbox.git?subdirectory=sdk%2Fpython&rev=b5667e7eff4d1dea5d276bcc3653f472e733dc05#b5667e7eff4d1dea5d276bcc3653f472e733dc05" }
 dependencies = [
     { name = "argon2-cffi" },
     { name = "certifi" },
@@ -677,7 +677,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.12" },
-    { name = "inkbox", git = "https://github.com/inkbox-ai/inkbox.git?subdirectory=sdk%2Fpython&rev=df6807c3502007e3510706d868fbcf143743977a" },
+    { name = "inkbox", git = "https://github.com/inkbox-ai/inkbox.git?subdirectory=sdk%2Fpython&rev=b5667e7eff4d1dea5d276bcc3653f472e733dc05" },
     { name = "openai", specifier = ">=1.99.0" },
     { name = "pydantic", specifier = ">=2.11.4" },
     { name = "python-dotenv", specifier = ">=1.1.0" },

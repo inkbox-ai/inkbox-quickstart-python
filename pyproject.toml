@@ -10,7 +10,7 @@ dependencies = [
   # SDK provides the tunnel runtime (bootstrap, h2 control, passthrough
   # TLS termination and h2-transcode forwarding), identity-owned webhooks,
   # and conditional subscription updates.
-  "inkbox==0.7.2",
+  "inkbox==0.7.3",
   "openai>=1.99.0",
   "pydantic>=2.11.4",
   "python-dotenv>=1.1.0",
@@ -32,7 +32,7 @@ sources = { "src" = "" }
 
 
 [tool.uv.sources]
-inkbox = { git = "https://github.com/inkbox-ai/inkbox.git", rev = "b5667e7eff4d1dea5d276bcc3653f472e733dc05", subdirectory = "sdk/python" }
+inkbox = { git = "https://github.com/inkbox-ai/inkbox.git", rev = "4f565ca4c1ba006fac1101686ce48b6b9ce5d3ea", subdirectory = "sdk/python" }
 
 [dependency-groups]
 dev = ["pytest>=8"]
